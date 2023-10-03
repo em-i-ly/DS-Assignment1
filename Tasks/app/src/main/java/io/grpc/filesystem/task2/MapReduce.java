@@ -49,7 +49,6 @@ public class MapReduce {
             }
         }
         return f.getParent() + "/temp";
-
     }
 
     /**
@@ -57,16 +56,34 @@ public class MapReduce {
      * @throws IOException
      */
     public static void map(String inputfilepath) throws IOException {
-
-        /*
-         * Insert your code here
-         * Take a chunk and filter words (you could use "\\p{Punct}" for filtering punctuations and "^[a-zA-Z0-9]"
-         * together for filtering the words), then split the sentences to take out words and assign "1" as the initial count.
-         * Use the given mapper class to create the unsorted key-value pair.
-         * Save the map output in a file named "map-chunk001", for example, in folder
-         * path input/temp/map
-         */
-
+        try (BufferedReader br = new BufferedReader(new FileReader(inputfilepath))) {
+            String l = br.readLine();
+            ArrayList<Mapper<String, Integer>> used = new ArrayList<>();
+            while (l != null) {
+                String[] words = l.toLowerCase().replaceAll("[\\p{Punct}]", "").split("\\s+");
+                for (String word : words) {
+                    if (!word.isEmpty()) {
+                        boolean found = false;
+                        for (int i = 0; i < used.size(); i++) {
+                            if (used.get(i).getWord().equals(word)) {
+                                used.set(i, new Mapper<>(word, used.get(i).getValue() + 1));
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) used.add(new Mapper<>(word, 1));
+                    }
+                }
+                l = br.readLine();
+            }
+            (new File("input/temp/map")).mkdir();
+            try (OutputStream out = new BufferedOutputStream(new FileOutputStream(new File("input/temp/map/map-chunk"
+                    + inputfilepath.substring(inputfilepath.length() - 7, inputfilepath.length() - 3) + "txt")))) {
+                for (Mapper<String, Integer> object : used) {
+                    out.write((object.getWord() + ":" + object.getValue() + "\n").getBytes(Charset.defaultCharset()));
+                }
+            }
+        }
     }
 
     /**
@@ -76,14 +93,43 @@ public class MapReduce {
      * @throws IOException
      */
     public static void reduce(String inputfilepath, String outputfilepath) throws IOException {
-
-        /*
-         * Insert your code here
-         * Take all the files in the map folder and reduce them to one file that shows
-         * unique words with their counts as "the:64", for example.
-         * Save the output of reduce function as output-task2.txt
-         */
-
+        try (OutputStream out = new BufferedOutputStream(new FileOutputStream(new File(outputfilepath)))) {
+            try (BufferedReader br = new BufferedReader(new FileReader(outputfilepath))) {
+                ArrayList<Mapper<String, Integer>> used = new ArrayList<>();
+                File dir = new File(inputfilepath + "/map");
+                File[] directoryListing = dir.listFiles();
+                for (File f : directoryListing) {
+                    try (BufferedReader br2 = new BufferedReader(new FileReader(f.getPath()))) {
+                        String line = br2.readLine();
+                        while (line != null) {
+                            String[] pair2 = line.split(":");
+                            boolean found = false;
+                            for (int i = 0; i < used.size(); i++) {
+                                if (used.get(i).getWord().equals(pair2[0])) {
+                                    used.set(i, new Mapper<>(pair2[0], used.get(i).getValue() + Integer.parseInt(pair2[1])));
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) used.add(new Mapper<>(pair2[0], Integer.parseInt(pair2[1])));
+                            line = br2.readLine();
+                        }
+                    }
+                }
+                for (int i = 0; i < used.size() - 1; i++) {
+                    for (int j = 0; j < used.size() - i - 1; j++) {
+                        if (used.get(j).getValue() < used.get(j+1).getValue()){
+                            Mapper<String, Integer> temp = used.get(j);
+                            used.set(j, used.get(j+1));
+                            used.set(j + 1, temp);
+                        }
+                    }
+                }
+                for (Mapper<String, Integer> object : used) {
+                    out.write((object.getWord() + ":" + object.getValue() + "\n").getBytes(Charset.defaultCharset()));
+                }
+            }
+        }
     }
 
     /**
