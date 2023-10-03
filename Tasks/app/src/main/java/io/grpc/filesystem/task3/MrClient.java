@@ -29,29 +29,58 @@ import java.io.*;
 import java.nio.charset.Charset;
 
 public class MrClient {
+
    Map<String, Integer> jobStatus = new HashMap<String, Integer>();
 
    public  void requestMap(String ip, Integer portnumber, String inputfilepath, String outputfilepath) throws InterruptedException {
-      
-      /* 
-      * Insert your code here 
-      * Create a stub for calling map function from the server
-      * Remember that the map function uses client stream
-      * Update the job status every time the map function finishes mapping a chunk, it is useful for calling reduce function once all of the chunks are processed by the map function
-      */
 
+      ManagedChannel channel = ManagedChannelBuilder.forAddress(ip, portnumber).usePlaintext().build();
+      AssignJobGrpc.AssignJobStub newStub = AssignJobGrpc.newStub(channel);
+
+      CountDownLatch latch = new CountDownLatch(1);
+
+      StreamObserver<MapInput> serverResponse = newStub.map(new StreamObserver<MapOutput>() {
+         @Override
+         public void onNext(MapOutput value) {
+            jobStatus.put(inputfilepath, value.getJobstatus());
+            System.out.println("Received response: Job status: " + value.getJobstatus());
+         }
+
+         @Override
+         public void onError(Throwable t) {
+            System.err.println("Error occurred: " + t.getMessage());
+            latch.countDown();
+         }
+
+         @Override
+         public void onCompleted() {
+            System.out.println("Element successfully mapped");
+            latch.countDown();
+         }
+      });
+      serverResponse.onNext(MapInput.newBuilder().setInputfilepath(inputfilepath).build());
+      serverResponse.onCompleted();
+
+      try {
+         latch.await();
+      } catch (InterruptedException e) {
+         e.printStackTrace();
+      }
+      channel.shutdown().awaitTermination(5, TimeUnit.SECONDS);
    }
 
-   public int requestReduce(String ip, Integer portnumber, String inputfilepath, String outputfilepath) {
-       
-      /* 
-      * Insert your code here 
-      * Create a stub for calling reduce function from the server
-      * Remember that the map function uses unary call
-      */
+   public int requestReduce(String ip, Integer portnumber, String inputfilepath, String outputfilepath) throws InterruptedException{
+      ManagedChannel channel = ManagedChannelBuilder.forAddress(ip, portnumber).usePlaintext().build();
+      AssignJobGrpc.AssignJobBlockingStub blockingStub = AssignJobGrpc.newBlockingStub(channel);
 
-      return 0; // update this return statement
+      ReduceInput newInput = ReduceInput.newBuilder()
+              .setInputfilepath(inputfilepath)
+              .setOutputfilepath(outputfilepath)
+              .build();
+
+      return blockingStub.reduce(newInput).getJobstatus();
    }
+
    public static void main(String[] args) throws Exception {// update main function if required
 
       String ip = args[0];
@@ -73,17 +102,17 @@ public class MrClient {
             if (f.isFile()) {
                noofjobs += 1;
                client.jobStatus.put(f.getPath(), 1);
-
+               client.requestMap(ip, mapport, f.getPath(), outputfilepath);
+               //moved requestMap call up to avoid concurrency problems and to not have to loop a second time in the function
+               //inputfilepath is now path to single chunk file and not path to all chunk files
             }
-
          }
       }
-      client.requestMap(ip, mapport, inputfilepath, outputfilepath);
 
       Set<Integer> values = new HashSet<Integer>(client.jobStatus.values());
       if (values.size() == 1 && client.jobStatus.containsValue(2)) {
 
-         response = client.requestReduce(ip, reduceport, chunkpath + "/map", outputfilepath);
+         response = client.requestReduce(ip, reduceport, chunkpath, outputfilepath);
          if (response == 2) {
 
             System.out.println("Reduce task completed!");
